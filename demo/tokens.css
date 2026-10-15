@@ -1,0 +1,78 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: Cobalt · enrichment: none (live product is the hero) · nav: N13 · footer: Ft2
+ * axes: light paper / grotesk-sans display / cool accent (cobalt 256)
+ * type: Space Grotesk 700 (display) · IBM Plex Sans 400/600 (body) · IBM Plex Mono 400/500 (machine voice: wordmark, code, labels)
+ */
+:root {
+  /* paper + ink — cool engineered, never #fff / #000 */
+  --color-paper:        oklch(98.5% 0.004 250);
+  --color-paper-2:      oklch(96.4% 0.007 252);
+  --color-paper-3:      oklch(93.5% 0.01 252);
+  --color-ink:          oklch(24% 0.02 258);
+  --color-ink-2:        oklch(36% 0.018 257);
+  --color-muted:        oklch(50% 0.016 256);
+  --color-rule:         oklch(90.5% 0.008 255);
+  --color-rule-2:       oklch(83% 0.012 255);
+
+  /* the one signal */
+  --color-accent:       oklch(58% 0.2 256);
+  --color-accent-hover: oklch(52% 0.2 257);
+  --color-accent-ink:   oklch(99% 0.003 250);
+  --color-accent-soft:  oklch(94.5% 0.03 256);
+  --color-focus:        oklch(58% 0.2 256);
+
+  /* graphite — code cards and the one dark band */
+  --color-graphite:       oklch(21% 0.016 260);
+  --color-graphite-2:     oklch(26% 0.018 260);
+  --color-graphite-rule:  oklch(33% 0.018 260);
+  --color-on-graphite:    oklch(93% 0.008 255);
+  --color-on-graphite-2:  oklch(76% 0.012 256);
+  --color-on-graphite-3:  oklch(66% 0.014 256);
+  --color-accent-bright:  oklch(74% 0.14 256);
+
+  /* status */
+  --color-ok:           oklch(48% 0.13 158);
+  --color-danger:       oklch(52% 0.19 27);
+  --color-danger-soft:  oklch(96% 0.025 27);
+  --color-shadow:       oklch(24% 0.02 258 / 0.08);
+  --color-shadow-lg:    oklch(24% 0.02 258 / 0.45);
+  --color-scrim:        oklch(24% 0.02 258 / 0.32);
+  --color-paper-glass:  oklch(98.5% 0.004 250 / 0.88);
+
+  /* type */
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 1.25 major-third scale, five sizes on the page */
+  --text-xs:      0.75rem;
+  --text-sm:      0.875rem;
+  --text-base:    1.0625rem;
+  --text-md:      1.3125rem;
+  --text-xl:      clamp(1.625rem, 1.2vw + 1.2rem, 2.125rem);
+  --text-display: clamp(2.5rem, 3.4vw + 1.35rem, 4.25rem);
+
+  /* 4-pt spacing */
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs:  0.75rem;
+  --space-sm:  1rem;
+  --space-md:  1.5rem;
+  --space-lg:  2rem;
+  --space-xl:  3rem;
+  --space-2xl: 4.5rem;
+  --space-3xl: 7rem;
+
+  --measure: 62ch;
+  --page: 76rem;
+
+  --radius-input: 6px;
+  --radius-card: 10px;
+
+  --rule: 1px solid var(--color-rule);
+
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-short: 160ms;
+  --dur-mid:   240ms;
+}

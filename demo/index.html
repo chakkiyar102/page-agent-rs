@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>page-agent.rs — an agent that lives in your page</title>
+<meta name="description" content="A Rust and WebAssembly port of Alibaba’s page-agent. Reads the page as text, asks a model for one action, and carries it out with real DOM events.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link id="page-agent-rs-fonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&family=Space+Grotesk:wght@700&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav" data-page-agent-ignore>
+  <div class="wrap nav__inner">
+    <a class="wordmark" href="#top">page-agent<span>.rs</span></a>
+    <ul class="nav__links">
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#install">Install</a></li>
+    </ul>
+    <button class="searchpill" id="searchpill" type="button" aria-haspopup="dialog" aria-label="Run an example task (⌘K)">
+      <span class="searchpill__ico" aria-hidden="true"></span>
+      <span class="searchpill__text">Run an example task…</span>
+      <span class="searchpill__kbd" aria-hidden="true"><kbd>⌘</kbd><kbd>K</kbd></span>
+    </button>
+    <a class="btn btn--primary btn--tight" href="https://github.com/chakkiyar102/page-agent-rs">Source<span class="wide-only">&nbsp;on GitHub</span></a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="wrap bench" aria-labelledby="hero-title">
+    <div class="bench__copy">
+      <h1 id="hero-title" data-page-agent-ignore>An agent that lives in your page.</h1>
+      <p class="lede" data-page-agent-ignore>Alibaba’s page-agent, rebuilt in Rust and compiled to WebAssembly.</p>
+      <p data-page-agent-ignore>It reads the page as indexed text, asks a model for one action, and carries it out with real DOM events. No extension, no headless browser, no screenshots.</p>
+
+      <form class="connect" id="connect" data-page-agent-ignore autocomplete="off">
+        <h2 class="label">Connect a model</h2>
+        <div class="connect__row">
+          <label class="field"><span>Endpoint</span><input class="input input--mono" id="cfg-base" value="https://api.openai.com/v1" spellcheck="false"></label>
+          <label class="field"><span>Model</span><input class="input input--mono" id="cfg-model" value="gpt-4.1-mini" spellcheck="false"></label>
+        </div>
+        <label class="field"><span>API key</span><input class="input input--mono" id="cfg-key" type="password" placeholder="sk-…" spellcheck="false"></label>
+        <div class="connect__go">
+          <button class="btn btn--primary" type="submit">Connect</button>
+          <p class="connect__status" id="cfg-status" role="status">Any OpenAI-compatible API works. The key stays in this tab’s memory.</p>
+        </div>
+      </form>
+    </div>
+
+    <figure class="frame">
+      <div class="frame__cap" data-page-agent-ignore>
+        <span class="label">Page under test</span>
+        <p>The agent never sees pixels. It gets the text view further down.</p>
+      </div>
+      <div class="app">
+        <div class="app__brand">
+          <h3>Create your Kestrel account</h3>
+          <p>Step 1 of 1</p>
+        </div>
+
+        <form id="signup" onsubmit="return false" novalidate>
+          <div class="two">
+            <label class="field"><span>Full name</span><input class="input" id="name" type="text" placeholder="Jane Okafor" autocomplete="off"></label>
+            <label class="field"><span>Email</span><input class="input" id="email" type="email" placeholder="jane@company.com" autocomplete="off"></label>
+          </div>
+          <label class="field select"><span>Country</span>
+            <select class="input" id="country">
+              <option value="">Choose…</option>
+              <option value="us">United States</option>
+              <option value="in">India</option>
+              <option value="de">Germany</option>
+            </select>
+          </label>
+          <div class="field">
+            <span id="plan-label">Plan</span>
+            <div class="plans" role="radiogroup" aria-labelledby="plan-label">
+              <div class="plan" role="radio" aria-checked="false" tabindex="0" data-plan="free"><b>Free</b><small>For trying it out</small></div>
+              <div class="plan" role="radio" aria-checked="false" tabindex="-1" data-plan="pro"><b>Pro</b><small>For one person</small></div>
+              <div class="plan" role="radio" aria-checked="false" tabindex="-1" data-plan="team"><b>Team</b><small>For a group</small></div>
+            </div>
+          </div>
+          <div class="app__submit">
+            <label class="check"><input id="terms" type="checkbox"> I accept the terms</label>
+            <button class="btn btn--primary" id="submit" type="button">Create account</button>
+          </div>
+          <p class="err" id="err" role="alert"></p>
+        </form>
+
+        <div class="result" id="result" role="status"></div>
+      </div>
+    </figure>
+  </section>
+
+  <section class="wrap view" id="view" aria-labelledby="view-title" data-page-agent-ignore>
+    <div class="view__copy">
+      <h2 id="view-title">What the model sees.</h2>
+      <p>Each step, the page is flattened to this. Elements you can click or type into get an index. A star marks the ones that appeared since the last step.</p>
+      <p>Edit the form above, then refresh to watch the view change.</p>
+      <button class="btn btn--ghost" id="view-refresh" type="button">Refresh the view</button>
+    </div>
+    <figure class="code-card">
+      <figcaption><span><b>agent</b>.getBrowserState()</span><span id="view-meta">live</span></figcaption>
+      <pre id="view-out" tabindex="0" aria-label="Text view of the page">Loading the WebAssembly module…</pre>
+    </figure>
+  </section>
+
+  <section class="band" id="how" aria-labelledby="how-title" data-page-agent-ignore>
+    <div class="wrap">
+      <div class="band__head">
+        <h2 id="how-title">One step, four moves.</h2>
+        <p>The same loop page-agent runs, with the same system prompt.</p>
+      </div>
+      <ol class="steps">
+        <li><span class="n">01</span><h3>Observe</h3><p>Walk the DOM. Keep what is visible and on top, and number everything you can click or type into.</p><code><b>[4]</b>&lt;div role=radio aria-checked=false&gt;Pro /&gt;</code></li>
+        <li><span class="n">02</span><h3>Think</h3><p>Send the text view and the step history to the model, which has to answer with exactly one tool call.</p><code><b>AgentOutput</b> { evaluation_previous_goal, memory, next_goal, action }</code></li>
+        <li><span class="n">03</span><h3>Act</h3><p>Fire pointer and mouse events, or set values through the native setter so React and Vue notice.</p><code><b>click_element_by_index</b> { "index": 4 }</code></li>
+        <li><span class="n">04</span><h3>Repeat</h3><p>Loop until the model calls done. It stops at 40 steps if it never does.</p><code><b>done</b> { "text": "…", "success": true }</code></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="wrap install" id="install" aria-labelledby="install-title" data-page-agent-ignore>
+    <div class="install__copy">
+      <h2 id="install-title">Drop it into any page.</h2>
+      <p>Build once, serve the files in <code>pkg/</code>, and point it at a model. The console is optional. <code>execute()</code> works on its own and resolves with the answer.</p>
+      <p class="note">The API key lives in the browser. For anything public, put a proxy in front of the model, as you would with upstream page-agent.</p>
+    </div>
+    <div class="install__code">
+      <figure class="code-card">
+        <figcaption><span>shell</span></figcaption>
+<pre><span class="c"># needs the wasm32 target and wasm-bindgen-cli 0.2.129</span>
+<span class="k">./build.sh</span>
+<span class="k">python3</span> -m http.server -d demo 8799</pre>
+      </figure>
+      <figure class="code-card">
+        <figcaption><span>app.js</span></figcaption>
+<pre><span class="k">import</span> init, { PageAgent } <span class="k">from</span> <span class="s">"./pkg/page_agent_rs.js"</span>;
+<span class="k">await</span> init();
+
+<span class="k">const</span> agent = <span class="k">new</span> PageAgent({
+  baseURL: <span class="s">"https://api.openai.com/v1"</span>,
+  model: <span class="s">"gpt-4.1-mini"</span>,
+  apiKey,
+});
+agent.mountPanel();
+<span class="k">const</span> { success, data } = <span class="k">await</span> agent.execute(<span class="s">"Sign me up on the Pro plan"</span>);</pre>
+      </figure>
+      <table class="tools">
+        <caption class="label">The nine tools</caption>
+        <tbody>
+          <tr><th scope="row">click_element_by_index</th><td>Click an indexed element</td></tr>
+          <tr><th scope="row">input_text</th><td>Click, then type into an input, textarea or contenteditable</td></tr>
+          <tr><th scope="row">select_dropdown_option</th><td>Pick a <code>&lt;select&gt;</code> option by its text</td></tr>
+          <tr><th scope="row">scroll · scroll_horizontally</th><td>Scroll the page, or the nearest scrollable container</td></tr>
+          <tr><th scope="row">wait</th><td>Wait 1–10 seconds for the page to settle</td></tr>
+          <tr><th scope="row">ask_user</th><td>Ask you a question mid-task</td></tr>
+          <tr><th scope="row">execute_javascript</th><td>Run a script on the page <em>— off unless you opt in</em></td></tr>
+          <tr><th scope="row">done</th><td>Finish and report back</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="foot" data-page-agent-ignore>
+  <div class="wrap">
+    <p><span>page-agent.rs</span><span>A Rust port of <a href="https://github.com/alibaba/page-agent">alibaba/page-agent</a></span><span>MIT licensed</span><a href="https://github.com/chakkiyar102/page-agent-rs">Source</a></p>
+  </div>
+</footer>
+
+<div class="cmdk" id="cmdk" aria-hidden="true" data-page-agent-ignore>
+  <div class="cmdk__backdrop" data-close></div>
+  <div class="cmdk__panel" role="dialog" aria-modal="true" aria-label="Example tasks">
+    <div class="cmdk__field">
+      <span class="searchpill__ico" aria-hidden="true"></span>
+      <input id="cmdk-input" placeholder="Search tasks and actions…" aria-label="Search tasks and actions" aria-controls="cmdk-results" autocomplete="off" spellcheck="false">
+      <kbd>esc</kbd>
+    </div>
+    <div class="cmdk__results" id="cmdk-results" role="listbox"></div>
+    <div class="cmdk__foot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span><kbd>esc</kbd> close</span></div>
+  </div>
+</div>
+
+<script>
+  /* the page under test: a plain signup form with no agent knowledge */
+  let plan = "";
+  const plans = [...document.querySelectorAll(".plan")];
+  const pick = (p) => {
+    plans.forEach(x => { x.setAttribute("aria-checked", x === p); x.tabIndex = x === p ? 0 : -1; });
+    plan = p.dataset.plan;
+  };
+  plans.forEach((p, i) => {
+    p.addEventListener("click", () => pick(p));
+    p.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); pick(p); }
+      const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (d) { e.preventDefault(); const n = plans[(i + d + plans.length) % plans.length]; pick(n); n.focus(); }
+    });
+  });
+  document.getElementById("submit").addEventListener("click", () => {
+    const v = id => document.getElementById(id).value.trim();
+    const err = document.getElementById("err");
+    if (!v("name") || !v("email").includes("@")) return err.textContent = "Add your name and a valid email.";
+    if (!v("country")) return err.textContent = "Choose a country.";
+    if (!plan) return err.textContent = "Pick a plan.";
+    if (!document.getElementById("terms").checked) return err.textContent = "Accept the terms to continue.";
+    err.textContent = "";
+    const code = "KST-" + (v("name").length * 7919 + plan.length * 31).toString(36).toUpperCase();
+    const country = document.getElementById("country").selectedOptions[0].textContent;
+    document.getElementById("signup").style.display = "none";
+    const r = document.getElementById("result");
+    r.style.display = "block";
+    r.replaceChildren();
+    const h = document.createElement("h3"); h.textContent = `Welcome, ${v("name")}.`;
+    const p = document.createElement("p"); p.textContent = `${plan[0].toUpperCase() + plan.slice(1)} plan · ${country}`;
+    const c = document.createElement("p"); c.className = "code"; c.textContent = code; c.setAttribute("aria-label", `Confirmation code ${code}`);
+    const l = document.createElement("p"); l.textContent = "Confirmation code"; l.className = "label"; l.style.marginTop = "var(--space-md)";
+    r.append(h, p, l, c);
+    window.__lastCode = code;
+  });
+</script>
+
+<script type="module">
+  import init, { PageAgent } from "./pkg/page_agent_rs.js";
+  await init();
+
+  const $ = (id) => document.getElementById(id);
+  const cfg = () => ({ baseURL: $("cfg-base").value.trim(), model: $("cfg-model").value.trim(), apiKey: $("cfg-key").value.trim() });
+  const agent = new PageAgent(cfg());
+  agent.mountPanel();
+  window.agent = agent;
+  window.startAgent = (c) => { agent.setConfig(c); return agent; };
+
+  /* connect */
+  const status = $("cfg-status");
+  $("connect").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const c = cfg();
+    status.removeAttribute("data-ok"); status.removeAttribute("data-err");
+    if (!c.baseURL || !c.model) { status.dataset.err = ""; status.textContent = "Add an endpoint and a model name."; return; }
+    agent.setConfig(c);
+    status.dataset.ok = "";
+    status.textContent = c.apiKey ? `Connected to ${c.model}. Open the console or press ⌘K.` : `Using ${c.model} with no key. Fine for local models.`;
+  });
+  const needsKey = () => !$("cfg-key").value.trim() && $("cfg-base").value.includes("api.openai.com");
+
+  /* live text view */
+  const esc = (s) => s.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]);
+  const paint = (s) => esc(s)
+    .replace(/^(\t*)(\*?\[\d+\])(&lt;[a-z0-9-]+)/gm, '$1<span class="ix">$2</span><span class="tag">$3</span>')
+    .replace(/^(Current Page:.*|Page info:.*|Interactive elements.*|\[(Start|End) of page\]|\.\.\. .*)$/gm, '<span class="dim">$1</span>');
+  const refresh = () => {
+    const s = agent.getBrowserState();
+    $("view-out").innerHTML = paint(s);
+    $("view-meta").textContent = `${(s.match(/\[\d+\]</g) || []).length} indexed · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+  };
+  $("view-refresh").addEventListener("click", refresh);
+  refresh();
+  agent.onEvent((e) => { if (e.type === "executed" || e.type === "done") refresh(); });
+
+  /* ⌘K palette */
+  const run = (task) => {
+    if (needsKey()) {
+      status.dataset.err = ""; status.removeAttribute("data-ok");
+      status.textContent = "Add an API key first, then run it again.";
+      $("cfg-key").focus();
+      return;
+    }
+    if (agent.running) return;
+    agent.setConfig(cfg());
+    agent.execute(task);
+  };
+  const commands = [
+    { group: "Run a task", label: "Sign up Ada Lovelace on the Pro plan", hint: "full flow", go: () => run("Sign me up as Ada Lovelace (ada@example.com) from India on the Pro plan, accept the terms, create the account, and tell me the confirmation code.") },
+    { group: "Run a task", label: "Submit with a bad email and report the error", hint: "error path", go: () => run("Fill the signup form with the name Test User and the email not-an-email, then press Create account and tell me exactly what error the page shows.") },
+    { group: "Run a task", label: "Pick the Team plan, then stop", hint: "short", go: () => run("Select the Team plan on the signup form, then finish without submitting.") },
+    { group: "Page", label: "Show what the model sees", hint: "scroll", go: () => { refresh(); $("view").scrollIntoView(); } },
+    { group: "Page", label: "Reset the signup form", hint: "reload", go: () => location.reload() },
+  ];
+  const cmdk = $("cmdk"), input = $("cmdk-input"), results = $("cmdk-results");
+  let active = 0, shown = commands, lastFocus = null;
+  const render = () => {
+    const q = input.value.trim().toLowerCase();
+    shown = commands.filter(c => c.label.toLowerCase().includes(q));
+    active = Math.min(active, Math.max(shown.length - 1, 0));
+    results.replaceChildren();
+    if (!shown.length) { const p = document.createElement("p"); p.className = "cmdk__empty"; p.textContent = `Nothing matches “${input.value}”.`; results.append(p); return; }
+    let group = "";
+    shown.forEach((c, i) => {
+      if (c.group !== group) { group = c.group; const g = document.createElement("p"); g.className = "cmdk__group label"; g.textContent = group; results.append(g); }
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "cmdk__item" + (i === active ? " is-active" : "");
+      b.setAttribute("role", "option"); b.setAttribute("aria-selected", i === active);
+      const t = document.createElement("span"); t.textContent = c.label;
+      const h = document.createElement("small"); h.textContent = c.hint;
+      b.append(t, h);
+      b.addEventListener("click", () => choose(i));
+      b.addEventListener("mousemove", () => { if (active !== i) { active = i; render(); } });
+      results.append(b);
+    });
+  };
+  const open = () => { lastFocus = document.activeElement; cmdk.classList.add("is-open"); cmdk.setAttribute("aria-hidden", "false"); input.value = ""; active = 0; render(); input.focus(); document.body.style.overflow = "hidden"; };
+  const close = () => { cmdk.classList.remove("is-open"); cmdk.setAttribute("aria-hidden", "true"); document.body.style.overflow = ""; lastFocus?.focus?.(); };
+  const choose = (i) => { const c = shown[i]; close(); c?.go(); };
+  $("searchpill").addEventListener("click", open);
+  cmdk.querySelector("[data-close]").addEventListener("click", close);
+  input.addEventListener("input", () => { active = 0; render(); });
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); cmdk.classList.contains("is-open") ? close() : open(); return; }
+    if (!cmdk.classList.contains("is-open")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % Math.max(shown.length, 1); render(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + shown.length) % Math.max(shown.length, 1); render(); }
+    else if (e.key === "Enter") { e.preventDefault(); choose(active); }
+    else if (e.key === "Tab") { e.preventDefault(); input.focus(); }
+  });
+
+  window.agentReady = true;
+</script>
+</body>
+</html>

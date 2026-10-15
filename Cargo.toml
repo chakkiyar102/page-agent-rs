@@ -1,0 +1,31 @@
+[package]
+name = "page-agent-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust/WASM port of alibaba/page-agent: an LLM GUI agent that lives inside your webpage"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.79"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dependencies.web-sys]
+version = "0.3.106"
+features = [
+  "Window", "Document", "Location", "Node", "NodeList", "Element", "HtmlElement",
+  "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlOptionElement",
+  "HtmlOptionsCollection", "HtmlButtonElement", "HtmlAnchorElement", "ShadowRoot",
+  "CssStyleDeclaration", "DomRect", "Event", "EventInit", "MouseEvent", "MouseEventInit",
+  "PointerEvent", "PointerEventInit", "FocusOptions", "ScrollIntoViewOptions",
+  "ScrollLogicalPosition", "ShadowRootInit", "ShadowRootMode", "KeyboardEvent", "HtmlFormElement", "HtmlHeadElement", "Request", "RequestInit", "Response", "Headers", "console",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
