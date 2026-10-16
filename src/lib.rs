@@ -60,6 +60,7 @@ mod wasm {
         elements: RefCell<Vec<Element>>,
         seen: js_sys::WeakSet,
         on_event: RefCell<Option<js_sys::Function>>,
+        before_action: RefCell<Option<js_sys::Function>>,
         /// the console's `.pa` root and the step row being filled in
         ui: RefCell<Option<Element>>,
         row: RefCell<Option<Element>>,
@@ -92,6 +93,7 @@ mod wasm {
                     elements: RefCell::new(vec![]),
                     seen: js_sys::WeakSet::new(),
                     on_event: RefCell::new(None),
+                    before_action: RefCell::new(None),
                     ui: RefCell::new(None),
                     row: RefCell::new(None),
                 }),
@@ -109,6 +111,15 @@ mod wasm {
         #[wasm_bindgen(js_name = onEvent)]
         pub fn on_event(&self, f: js_sys::Function) {
             *self.inner.on_event.borrow_mut() = Some(f);
+        }
+
+        /// `fn({tool, args, index, label, element}) -> boolean | Promise<boolean>` awaited before every
+        /// action (not `done`). `false`, a throw or a rejection skips the action and tells the model the
+        /// user declined it; anything else proceeds. `element` is the target DOM node, or null.
+        /// Pass `null` to remove the hook.
+        #[wasm_bindgen(js_name = onBeforeAction)]
+        pub fn on_before_action(&self, f: Option<js_sys::Function>) {
+            *self.inner.before_action.borrow_mut() = f;
         }
 
         #[wasm_bindgen(getter)]
@@ -473,6 +484,23 @@ mod wasm {
             let label = if label.is_empty() { i.to_string() } else { label.chars().take(40).collect() };
             Ok((e, label))
         };
+        let hook = inner.before_action.borrow().clone();
+        if let Some(f) = hook {
+            let index = input.get("index").filter(|v| !v.is_null());
+            let (element, label) = match index.map(el) {
+                Some(Ok((e, l))) => (JsValue::from(e), l),
+                _ => (JsValue::NULL, String::new()),
+            };
+            let info = to_js(&json!({"tool":tool,"args":input,"index":index,"label":label}));
+            let _ = js_sys::Reflect::set(&info, &"element".into(), &element);
+            let allowed = match f.call1(&JsValue::NULL, &info) {
+                Ok(v) => matches!(JsFuture::from(js_sys::Promise::resolve(&v)).await, Ok(v) if v != JsValue::FALSE),
+                Err(_) => false,
+            };
+            if !allowed {
+                return agent::declined(tool, &label);
+            }
+        }
         let vh = win().inner_height().unwrap().as_f64().unwrap_or(800.0);
         let text = input["text"].as_str().unwrap_or("");
         match tool {

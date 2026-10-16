@@ -18,6 +18,13 @@ export class PageAgent {
     mountPanel(): void;
     constructor(config: any);
     /**
+     * `fn({tool, args, index, label, element}) -> boolean | Promise<boolean>` awaited before every
+     * action (not `done`). `false`, a throw or a rejection skips the action and tells the model the
+     * user declined it; anything else proceeds. `element` is the target DOM node, or null.
+     * Pass `null` to remove the hook.
+     */
+    onBeforeAction(f?: Function | null): void;
+    /**
      * `fn(event: {type, ...})` called for task/thinking/step/executed/done/error.
      */
     onEvent(f: Function): void;
@@ -41,6 +48,7 @@ export interface InitOutput {
     readonly pageagent_getBrowserState: (a: number) => [number, number];
     readonly pageagent_mountPanel: (a: number) => [number, number];
     readonly pageagent_new: (a: any) => [number, number, number];
+    readonly pageagent_onBeforeAction: (a: number, b: number) => void;
     readonly pageagent_onEvent: (a: number, b: any) => void;
     readonly pageagent_running: (a: number) => number;
     readonly pageagent_setConfig: (a: number, b: any) => [number, number];

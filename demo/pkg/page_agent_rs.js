@@ -60,6 +60,16 @@ export class PageAgent {
         return this;
     }
     /**
+     * `fn({tool, args, index, label, element}) -> boolean | Promise<boolean>` awaited before every
+     * action (not `done`). `false`, a throw or a rejection skips the action and tells the model the
+     * user declined it; anything else proceeds. `element` is the target DOM node, or null.
+     * Pass `null` to remove the hook.
+     * @param {Function | null} [f]
+     */
+    onBeforeAction(f) {
+        wasm.pageagent_onBeforeAction(this.__wbg_ptr, isLikeNone(f) ? 0 : addToExternrefTable0(f));
+    }
+    /**
      * `fn(event: {type, ...})` called for task/thinking/step/executed/done/error.
      * @param {Function} f
      */
@@ -111,6 +121,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_undefined_8865fb403f8fe9d8: function(arg0) {
             const ret = arg0 === undefined;
+            return ret;
+        },
+        __wbg___wbindgen_jsval_eq_02babf21faa37971: function(arg0, arg1) {
+            const ret = arg0 === arg1;
             return ret;
         },
         __wbg___wbindgen_number_get_2e0e7dee9f701a71: function(arg0, arg1) {
@@ -663,6 +677,10 @@ function __wbg_get_imports() {
             const ret = arg0.setTimeout(arg1, arg2);
             return ret;
         }, arguments); },
+        __wbg_set_145a351398b48c65: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = Reflect.set(arg0, arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_set_af5932e3f78b5648: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
             arg0.set(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
         }, arguments); },
@@ -892,7 +910,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 49, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("Event")], shim_idx: 57, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
             const ret = makeClosure(arg0, arg1, wasm_bindgen_e666d8eafe4949ee___convert__closures_____invoke___web_sys_60075e0863155b4b___features__gen_Event__Event______true_);
             return ret;
         },

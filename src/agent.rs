@@ -192,6 +192,12 @@ pub fn result_status(output: &str) -> (&'static str, String) {
     (status, text)
 }
 
+/// Tool result when the `onBeforeAction` hook said no. Starts with ❌ so the console shows it as not done.
+pub fn declined(tool: &str, label: &str) -> String {
+    let on = if label.is_empty() { String::new() } else { format!(" on element ({label})") };
+    format!("❌ The user declined this action ({tool}{on}). It was not performed. Do not retry it; continue another way or call done and explain.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +208,9 @@ mod tests {
         assert_eq!(result_status("✅ Clicked element (Pro)."), ("true", "Clicked element (Pro).".into()));
         assert_eq!(result_status("❌ Failed to click element: x").0, "false");
         assert_eq!(result_status("⚠️ Already at the bottom").0, "warn");
+        assert_eq!(result_status(&declined("click_element_by_index", "Send")).0, "false");
+        assert!(declined("click_element_by_index", "Send").contains("declined this action (click_element_by_index on element (Send))"));
+        assert!(declined("scroll", "").contains("(scroll)"));
     }
 
     fn resp(name: &str, args: &str) -> Value {

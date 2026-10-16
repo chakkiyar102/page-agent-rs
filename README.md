@@ -25,6 +25,8 @@ await init();
 const agent = new PageAgent({ baseURL: "https://api.openai.com/v1", apiKey, model: "gpt-4.1-mini" });
 agent.mountPanel();                 // optional floating console (shadow DOM, can't clash with your CSS)
 agent.onEvent(e => console.log(e)); // thinking / step / executed / done / error
+agent.onBeforeAction(async ({ tool, args, index, label, element }) => // optional gate, awaited before each action
+  !/delete|send/i.test(label) || confirm(`Allow ${tool} on "${label}"?`)); // false/throw = skipped, model told "declined"
 const { success, data } = await agent.execute("Sign me up on the Pro plan");
 ```
 Change model or key later with `agent.setConfig({...})`. Mark parts of your page the agent should not see with `data-page-agent-ignore` (whole subtree hidden) or `data-page-agent-not-interactive` (visible, never indexed).

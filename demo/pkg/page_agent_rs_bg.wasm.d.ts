@@ -6,6 +6,7 @@ export const pageagent_execute: (a: number, b: number, c: number) => any;
 export const pageagent_getBrowserState: (a: number) => [number, number];
 export const pageagent_mountPanel: (a: number) => [number, number];
 export const pageagent_new: (a: any) => [number, number, number];
+export const pageagent_onBeforeAction: (a: number, b: number) => void;
 export const pageagent_onEvent: (a: number, b: any) => void;
 export const pageagent_running: (a: number) => number;
 export const pageagent_setConfig: (a: number, b: any) => [number, number];
