@@ -18,9 +18,9 @@ export function configFromEnv(overrides = {}) {
 }
 
 /** Launch installed Chrome with one page. `onEvent` gets agent events (task/step/done...). */
-export async function openPage({ headed = false, onEvent = () => {} } = {}) {
+export async function openPage({ headed = false, storageState, onEvent = () => {} } = {}) {
   const browser = await chromium.launch({ channel: "chrome", headless: !headed });
-  const page = await browser.newPage({ viewport: null });
+  const page = await (await browser.newContext({ viewport: null, storageState })).newPage(); // storageState: Playwright session file for signed-in sites
   // Serve pkg/ from the page's own origin so CSP 'self' allows the module and wasm fetch.
   await page.route("**/__page_agent__/*", async (route) => {
     const file = new URL(route.request().url()).pathname.split("/").pop();
@@ -52,7 +52,10 @@ async function inject(page, cfg, panel) {
 // ponytail: single page per task. A task that navigates away loses the in-page agent (same as upstream);
 // re-inject on framenavigated and resume if multi-page flows matter.
 export async function runTask(page, task, cfg, { url, panel = false } = {}) {
-  if (url) await page.goto(url, { waitUntil: "load" });
+  if (url) {
+    await page.goto(url, { waitUntil: "load" });
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {}); // let SPAs render before the agent reads the DOM
+  }
   try {
     await inject(page, cfg, panel);
     return await page.evaluate((task) => window.__pageAgentRs.execute(task), task);
