@@ -11,7 +11,7 @@ Rust/WASM port of [alibaba/page-agent](https://github.com/alibaba/page-agent): a
 Tools: `done`, `wait`, `ask_user` (uses `window.prompt`), `click_element_by_index`, `input_text`, `select_dropdown_option`, `scroll`, `scroll_horizontally`, and `execute_javascript` (only with `experimentalScriptExecutionTool: true`).
 
 ## Demo
-`demo/` is a small Workbench page: a live signup form the agent drives, a live readout of `agent.getBrowserState()` (exactly what the model sees), and a ⌘K palette of example tasks. The built `demo/pkg/` is committed, so `python3 -m http.server -d demo 8799` works straight from a clone.
+`demo/` is a small Workbench page: a live signup form the agent drives, a live readout of `agent.getBrowserState()` (exactly what the model sees), and a ⌘K palette of example tasks. `demo/pkg/` is not committed: run `./build.sh` once after cloning, then `python3 -m http.server -d demo 8799`.
 
 Typography: Space Grotesk for display, IBM Plex Sans for body text, IBM Plex Mono for code and labels. Tokens are in `demo/tokens.css`; the console carries its own tokens in `src/panel.css`.
 
@@ -34,6 +34,15 @@ Change model or key later with `agent.setConfig({...})`. Mark parts of your page
 Config: `baseURL, apiKey, model, maxSteps, temperature, language, viewportExpansion (-1 = full page), stepDelay, instructions, customSystemPrompt, experimentalScriptExecutionTool`.
 
 **Security:** the API key sits in the browser. Use a proxy or a scoped key for anything public, same as upstream.
+
+## CLI
+Run the agent on any URL from a terminal. It opens your installed Chrome through playwright-core, injects `demo/pkg` from the page's own origin (so CSP `'self'` allows it), runs one task and prints `{success, data}` as JSON.
+```sh
+./build.sh && cd cli && npm i && npm link     # once
+export OPENAI_API_KEY=...                     # or PAGE_AGENT_API_KEY
+page-agent https://example.com "What is the page heading?"   # --headed --keep-open --model --base-url --max-steps
+```
+Progress events go to stderr and the result goes to stdout. Exit code 0 means success. It handles one page only: if the task navigates away, the in-page agent is lost.
 
 ## Not ported (yet)
 Animated cursor and mask overlay, element highlight boxes, i18n UI, `llms.txt` fetch, custom tools from JS, the MCP and extension packages, and same-origin iframes.
