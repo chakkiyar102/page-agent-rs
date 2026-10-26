@@ -144,7 +144,7 @@
   text-wrap: pretty;
 }
 .pa-task::before {
-  content: "Task";
+  content: attr(data-label);
   display: block;
   margin-bottom: var(--pa-space-3xs);
   font: 500 0.6875rem/1 var(--pa-font-mono);
@@ -186,6 +186,8 @@
 .pa-step[data-ok="true"] .pa-out::before { content: "✓"; color: var(--pa-ok); }
 .pa-step[data-ok="false"] .pa-out::before { content: "✕"; color: var(--pa-danger); }
 .pa-step[data-ok="warn"] .pa-out::before { content: "!"; color: var(--pa-warn); }
+/* retry errors keep their marker after the step later succeeds */
+.pa-step[data-ok] .pa-out.pa-err::before { content: "!"; color: var(--pa-warn); }
 
 .pa-final {
   padding: var(--pa-space-sm);

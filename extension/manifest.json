@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "page-agent.rs",
+  "version": "0.1.0",
+  "description": "Run the page-agent-rs WASM agent on the current tab.",
+  "action": { "default_title": "page-agent.rs", "default_popup": "popup.html" },
+  "permissions": ["storage", "activeTab", "scripting"],
+  "web_accessible_resources": [
+    { "resources": ["pkg/*"], "matches": ["<all_urls>"] }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

@@ -29,6 +29,12 @@ export class PageAgent {
      */
     onEvent(f: Function): void;
     /**
+     * Add or replace a tool: `{description, parameters, execute}` where `parameters` is a JSON
+     * schema object and `execute(args)` returns (a promise of) the result the model reads.
+     * Same name as a built-in replaces it. `null` removes the tool (`done` can't be removed).
+     */
+    registerTool(name: string, def: any): void;
+    /**
      * Replace the config (e.g. after the user pastes a key). Applies to the next task.
      */
     setConfig(config: any): void;
@@ -50,12 +56,14 @@ export interface InitOutput {
     readonly pageagent_new: (a: any) => [number, number, number];
     readonly pageagent_onBeforeAction: (a: number, b: number) => void;
     readonly pageagent_onEvent: (a: number, b: any) => void;
+    readonly pageagent_registerTool: (a: number, b: number, c: number, d: any) => [number, number];
     readonly pageagent_running: (a: number) => number;
     readonly pageagent_setConfig: (a: number, b: any) => [number, number];
     readonly pageagent_stop: (a: number) => void;
     readonly wasm_bindgen_e666d8eafe4949ee___convert__closures_____invoke___js_sys_2bb0207fd6764501___Function_fn_wasm_bindgen_e666d8eafe4949ee___JsValue_____wasm_bindgen_e666d8eafe4949ee___sys__Undefined___js_sys_2bb0207fd6764501___Function_fn_wasm_bindgen_e666d8eafe4949ee___JsValue_____wasm_bindgen_e666d8eafe4949ee___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_e666d8eafe4949ee___convert__closures_____invoke___wasm_bindgen_e666d8eafe4949ee___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_e666d8eafe4949ee___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_e666d8eafe4949ee___convert__closures_____invoke___web_sys_60075e0863155b4b___features__gen_Event__Event______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_e666d8eafe4949ee___convert__closures_____invoke___web_sys_e96a5e42b9165f19___features__gen_Event__Event______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_e666d8eafe4949ee___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

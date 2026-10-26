@@ -7,12 +7,23 @@ use web_sys::{Element, HtmlElement};
 
 pub const PANEL_ID: &str = "page-agent-rs-panel";
 
-const SKIP_TAGS: &[&str] = &["script", "style", "noscript", "head", "meta", "link", "template", "svg", "iframe"];
+const SKIP_TAGS: &[&str] = &["script", "style", "noscript", "head", "meta", "link", "template", "svg"];
 const INTERACTIVE_TAGS: &[&str] = &["a", "button", "input", "select", "textarea", "details", "summary", "option"];
 const INTERACTIVE_ROLES: &[&str] = &[
     "button", "link", "checkbox", "radio", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
     "option", "switch", "combobox", "textbox", "searchbox", "slider", "spinbutton", "treeitem",
 ];
+
+/// `dyn_ref` is an `instanceof` check against this window's classes, so it fails for elements
+/// from a same-origin iframe. Check the tag instead.
+pub fn cast<'a, T: JsCast>(el: &'a Element, tag: &str) -> Option<&'a T> {
+    el.tag_name().eq_ignore_ascii_case(tag).then(|| el.unchecked_ref::<T>())
+}
+
+/// Any HTML-namespace element, from any same-origin frame.
+pub fn html(el: &Element) -> Option<&HtmlElement> {
+    (el.namespace_uri().as_deref() == Some("http://www.w3.org/1999/xhtml")).then(|| el.unchecked_ref::<HtmlElement>())
+}
 
 pub struct Snapshot {
     pub roots: Vec<Node>,
@@ -27,6 +38,9 @@ struct Ctx {
     vh: f64,
     /// px beyond the viewport still considered visible; -1 = whole page
     expansion: f64,
+    /// offset of the frame being walked, in top-level viewport px
+    ox: f64,
+    oy: f64,
     seen: js_sys::WeakSet,
     elements: Vec<Element>,
 }
@@ -40,6 +54,8 @@ pub fn snapshot(expansion: f64, seen: &js_sys::WeakSet) -> Snapshot {
         doc: doc.clone(),
         win,
         expansion,
+        ox: 0.0,
+        oy: 0.0,
         seen: seen.clone(),
         elements: vec![],
     };
@@ -78,8 +94,15 @@ fn build(node: &web_sys::Node, ctx: &mut Ctx, parent_pointer: bool) -> Option<No
         web_sys::Node::ELEMENT_NODE => {
             let el: &Element = node.unchecked_ref();
             let tag = el.tag_name().to_lowercase();
-            if SKIP_TAGS.contains(&tag.as_str()) || el.id() == PANEL_ID || el.has_attribute("data-page-agent-ignore") {
+            if SKIP_TAGS.contains(&tag.as_str())
+                || el.id() == PANEL_ID
+                || el.id() == crate::overlay::OVERLAY_ID
+                || el.has_attribute("data-page-agent-ignore")
+            {
                 return None;
+            }
+            if tag == "iframe" {
+                return iframe(el, ctx);
             }
             let style = ctx.win.get_computed_style(el).ok()??;
             let prop = |p: &str| style.get_property_value(p).unwrap_or_default();
@@ -113,20 +136,20 @@ fn build(node: &web_sys::Node, ctx: &mut Ctx, parent_pointer: bool) -> Option<No
                     }
                 }
                 // live values beat stale attributes
-                if let Some(i) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+                if let Some(i) = cast::<web_sys::HtmlInputElement>(el, "input") {
                     set_attr(&mut e.attrs, "value", i.value());
                     if ["checkbox", "radio"].contains(&i.type_().as_str()) {
                         set_attr(&mut e.attrs, "checked", i.checked().to_string());
                     }
-                } else if let Some(t) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                } else if let Some(t) = cast::<web_sys::HtmlTextAreaElement>(el, "textarea") {
                     set_attr(&mut e.attrs, "value", t.value());
-                } else if let Some(s) = el.dyn_ref::<web_sys::HtmlSelectElement>() {
+                } else if let Some(s) = cast::<web_sys::HtmlSelectElement>(el, "select") {
                     set_attr(&mut e.attrs, "value", s.value());
                 }
             } else {
                 e.scroll = None;
             }
-            e.children = match el.dyn_ref::<web_sys::HtmlSelectElement>() {
+            e.children = match cast::<web_sys::HtmlSelectElement>(el, "select") {
                 // options have no layout box, so list them as the select's text
                 Some(s) => {
                     let o = s.options();
@@ -146,6 +169,25 @@ fn build(node: &web_sys::Node, ctx: &mut Ctx, parent_pointer: bool) -> Option<No
     }
 }
 
+/// Same-origin iframes are walked like any subtree; cross-origin ones have no contentDocument.
+fn iframe(el: &Element, ctx: &mut Ctx) -> Option<Node> {
+    let doc = cast::<web_sys::HtmlIFrameElement>(el, "iframe")?.content_document()?;
+    let body = doc.body()?;
+    let win = doc.default_view()?;
+    if !is_visible_rect(el, ctx) {
+        return None;
+    }
+    let r = el.get_bounding_client_rect();
+    let saved = (ctx.doc.clone(), ctx.win.clone(), ctx.ox, ctx.oy);
+    ctx.ox += r.left() + el.client_left() as f64;
+    ctx.oy += r.top() + el.client_top() as f64;
+    ctx.doc = doc;
+    ctx.win = win;
+    let children = children_of(&body, ctx, false);
+    (ctx.doc, ctx.win, ctx.ox, ctx.oy) = saved;
+    (!children.is_empty()).then(|| Node::El(El { tag: "iframe".into(), children, ..Default::default() }))
+}
+
 fn set_attr(attrs: &mut Vec<(String, String)>, k: &str, v: String) {
     attrs.retain(|(n, _)| n != k);
     attrs.push((k.into(), v));
@@ -161,7 +203,7 @@ fn is_interactive(el: &Element, tag: &str, own_pointer: bool) -> bool {
     let role = el.get_attribute("role").unwrap_or_default();
     INTERACTIVE_TAGS.contains(&tag)
         || INTERACTIVE_ROLES.contains(&role.as_str())
-        || el.dyn_ref::<HtmlElement>().map(|h| h.is_content_editable()).unwrap_or(false)
+        || html(el).map(|h| h.is_content_editable()).unwrap_or(false)
         || el.has_attribute("onclick")
         || el.get_attribute("tabindex").and_then(|t| t.parse::<i32>().ok()).map(|t| t >= 0).unwrap_or(false)
         || own_pointer
@@ -177,15 +219,17 @@ fn in_view(el: &Element, ctx: &Ctx) -> bool {
         return true;
     }
     let r = el.get_bounding_client_rect();
-    let x = ctx.expansion;
-    r.bottom() > -x && r.top() < ctx.vh + x && r.right() > -x && r.left() < ctx.vw + x
+    let (x, ox, oy) = (ctx.expansion, ctx.ox, ctx.oy);
+    r.bottom() + oy > -x && r.top() + oy < ctx.vh + x && r.right() + ox > -x && r.left() + ox < ctx.vw + x
 }
 
 /// Is the element actually on top at its center point (not covered by a modal, etc.)?
 fn is_top(el: &Element, ctx: &Ctx) -> bool {
+    // hit-test in the element's own frame, in that frame's coordinates
     let r = el.get_bounding_client_rect();
     let (cx, cy) = (r.left() + r.width() / 2.0, r.top() + r.height() / 2.0);
-    if cx < 0.0 || cy < 0.0 || cx > ctx.vw || cy > ctx.vh {
+    let (fw, fh) = (ctx.win.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(ctx.vw), ctx.win.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(ctx.vh));
+    if cx < 0.0 || cy < 0.0 || cx > fw || cy > fh || cx + ctx.ox > ctx.vw || cy + ctx.oy > ctx.vh {
         return true; // ponytail: can't hit-test offscreen, assume on top
     }
     match ctx.doc.element_from_point(cx as f32, cy as f32) {

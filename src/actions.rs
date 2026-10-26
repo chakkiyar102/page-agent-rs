@@ -1,7 +1,8 @@
 //! Page actions performed with synthetic events, mirroring page-agent's PageController.
 
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{Element, HtmlElement};
+use crate::dom::{cast, html};
+use web_sys::Element;
 
 pub async fn sleep(secs: f64) {
     let p = js_sys::Promise::new(&mut |res, _| {
@@ -57,7 +58,8 @@ pub async fn click(el: &Element) -> Result<(), String> {
     sleep(0.05).await;
     let r = el.get_bounding_client_rect();
     let (x, y) = (r.left() + r.width() / 2.0, r.top() + r.height() / 2.0);
-    let doc = web_sys::window().unwrap().document().unwrap();
+    // coordinates are in the element's own frame, so hit-test that frame's document
+    let doc = el.owner_document().ok_or("element is detached")?;
     // dispatch on the deepest element under the pointer if it belongs to the target
     let t = doc
         .element_from_point(x as f32, y as f32)
@@ -69,14 +71,14 @@ pub async fn click(el: &Element) -> Result<(), String> {
     mouse(&t, "mouseenter", x, y, false);
     pointer(&t, "pointerdown", x, y, true);
     mouse(&t, "mousedown", x, y, true);
-    if let Some(h) = el.dyn_ref::<HtmlElement>() {
+    if let Some(h) = html(el) {
         let f = web_sys::FocusOptions::new();
         f.set_prevent_scroll(true);
         let _ = h.focus_with_options(&f);
     }
     pointer(&t, "pointerup", x, y, true);
     mouse(&t, "mouseup", x, y, true);
-    t.dyn_ref::<HtmlElement>().ok_or("not an HTMLElement")?.click();
+    html(&t).ok_or("not an HTMLElement")?.click();
     sleep(0.2).await;
     Ok(())
 }
@@ -86,18 +88,21 @@ fn native_set_value(el: &Element, v: &str) -> Result<(), String> {
     let proto = js_sys::Object::get_prototype_of(el.as_ref());
     let desc = js_sys::Object::get_own_property_descriptor(&proto, &JsValue::from_str("value"));
     let setter = js_sys::Reflect::get(&desc, &JsValue::from_str("set")).map_err(|_| "no value setter")?;
+    if !setter.is_function() {
+        return Err("no value setter".into());
+    }
+    // unchecked: an iframe's setter is a Function from another realm, which fails instanceof
     setter
-        .dyn_into::<js_sys::Function>()
-        .map_err(|_| "no value setter")?
+        .unchecked_into::<js_sys::Function>()
         .call1(el.as_ref(), &JsValue::from_str(v))
         .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }
 
 pub async fn input_text(el: &Element, text: &str) -> Result<(), String> {
-    let h = el.dyn_ref::<HtmlElement>().ok_or("not an HTMLElement")?;
+    let h = html(el).ok_or("not an HTMLElement")?;
     let editable = h.is_content_editable();
-    let is_field = el.dyn_ref::<web_sys::HtmlInputElement>().is_some() || el.dyn_ref::<web_sys::HtmlTextAreaElement>().is_some();
+    let is_field = ["INPUT", "TEXTAREA"].contains(&el.tag_name().to_uppercase().as_str());
     if !is_field && !editable {
         return Err("Element is not an input, textarea, or contenteditable".into());
     }
@@ -117,11 +122,11 @@ pub async fn input_text(el: &Element, text: &str) -> Result<(), String> {
 }
 
 pub async fn select_option(el: &Element, text: &str) -> Result<(), String> {
-    let s = el.dyn_ref::<web_sys::HtmlSelectElement>().ok_or("Element is not a select element")?;
+    let s = cast::<web_sys::HtmlSelectElement>(el, "select").ok_or("Element is not a select element")?;
     let opts = s.options();
     let opt = (0..opts.length())
         .filter_map(|i| opts.item(i))
-        .filter_map(|o| o.dyn_into::<web_sys::HtmlOptionElement>().ok())
+        .map(|o| o.unchecked_into::<web_sys::HtmlOptionElement>())
         .find(|o| o.text().trim() == text.trim())
         .ok_or_else(|| format!("Option with text \"{text}\" not found in select element"))?;
     s.set_value(&opt.value());

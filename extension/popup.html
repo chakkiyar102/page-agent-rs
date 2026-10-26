@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>page-agent.rs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&family=Space+Grotesk:wght@700&display=swap">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main>
+  <h1>page-agent<span>.rs</span></h1>
+
+  <form id="task-form">
+    <label for="task">Task</label>
+    <textarea id="task" rows="3" placeholder="Find the pricing page and summarise the plans"></textarea>
+    <div class="row">
+      <button type="button" id="console" class="btn">Open console</button>
+      <button type="submit" id="run" class="btn primary">Run task</button>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+  </form>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <form id="settings-form">
+      <label for="baseURL">Base URL</label>
+      <input id="baseURL" type="url" spellcheck="false" autocomplete="off">
+      <label for="apiKey">API key</label>
+      <input id="apiKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-...">
+      <label for="model">Model</label>
+      <input id="model" type="text" spellcheck="false" autocomplete="off">
+      <div class="row">
+        <span class="note">Stored in this browser only.</span>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </details>
+</main>
+<script src="popup.js" type="module"></script>
+</body>
+</html>

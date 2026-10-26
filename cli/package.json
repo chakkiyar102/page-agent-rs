@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "description": "CLI for page-agent-rs: run an in-page LLM agent on any URL",
   "type": "module",
-  "bin": { "page-agent": "./page-agent.mjs" },
-  "dependencies": { "playwright-core": "1.64.0" },
+  "bin": {
+    "page-agent": "./page-agent.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.64.0"
+  },
   "license": "MIT"
 }

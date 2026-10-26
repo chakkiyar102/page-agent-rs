@@ -25,12 +25,24 @@ pub struct Config {
     pub step_delay: f64,
     #[serde(default)]
     pub experimental_script_execution_tool: bool,
+    /// Fetch `<origin>/llms.txt` and give it to the model (first 1000 chars).
+    #[serde(default)]
+    pub experimental_llms_txt: bool,
+    /// Block user input and show the agent cursor while a task runs.
+    #[serde(default = "d_true")]
+    pub mask: bool,
+    /// Outline indexed elements while a task runs.
+    #[serde(default = "d_true")]
+    pub highlight: bool,
+    /// Console language: "en-US" | "zh-CN". Default: the browser's language.
+    pub locale: Option<String>,
     /// Extra system-level instructions for this site.
     pub instructions: Option<String>,
     pub custom_system_prompt: Option<String>,
 }
 fn d_max_steps() -> usize { 40 }
 fn d_step_delay() -> f64 { 0.4 }
+fn d_true() -> bool { true }
 
 pub struct Reflection {
     pub evaluation_previous_goal: String,
@@ -43,8 +55,11 @@ pub enum Hist {
     Obs(String),
 }
 
-/// (description, JSON schema of the input) per tool. Order = page-agent's.
-pub fn tools(cfg: &Config) -> Vec<(&'static str, &'static str, Value)> {
+/// (name, description, JSON schema of the input).
+pub type ToolDef = (String, String, Value);
+
+/// Built-in tools, in page-agent's order.
+pub fn tools(cfg: &Config) -> Vec<ToolDef> {
     let idx = json!({"type": "integer", "minimum": 0});
     let mut t = vec![
         ("done", "Complete task. Text is your final response to the user — keep it concise unless the user explicitly asks for detail.",
@@ -68,13 +83,25 @@ pub fn tools(cfg: &Config) -> Vec<(&'static str, &'static str, Value)> {
         t.push(("execute_javascript", "Execute JavaScript code on the current page. Supports async/await syntax. Use with caution!",
             json!({"type":"object","properties":{"script":{"type":"string"}},"required":["script"]})));
     }
+    t.into_iter().map(|(n, d, s)| (n.to_string(), d.to_string(), s)).collect()
+}
+
+/// Built-ins minus `removed`, with `custom` replacing same-named built-ins or appended. `done` always stays.
+pub fn merge_tools(builtin: Vec<ToolDef>, custom: &[ToolDef], removed: &[String]) -> Vec<ToolDef> {
+    let mut t: Vec<ToolDef> = builtin.into_iter().filter(|(n, _, _)| n == "done" || !removed.contains(n)).collect();
+    for c in custom {
+        match t.iter_mut().find(|(n, _, _)| *n == c.0) {
+            Some(slot) => *slot = c.clone(),
+            None => t.push(c.clone()),
+        }
+    }
     t
 }
 
 /// The single macro tool the model must call each step: reflection + exactly one action.
-pub fn agent_output_tool(cfg: &Config) -> Value {
-    let variants: Vec<Value> = tools(cfg)
-        .into_iter()
+pub fn agent_output_tool(tools: &[ToolDef]) -> Value {
+    let variants: Vec<Value> = tools
+        .iter()
         .map(|(name, desc, schema)| json!({"type":"object","description":desc,"properties":{name: schema},"required":[name],"additionalProperties":false}))
         .collect();
     json!({"type":"function","function":{
@@ -99,10 +126,20 @@ pub fn system_prompt(cfg: &Config) -> String {
     }
 }
 
-pub fn user_prompt(cfg: &Config, task: &str, history: &[Hist], header: &str, content: &str, footer: &str, now: &str) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn user_prompt(cfg: &Config, task: &str, history: &[Hist], header: &str, content: &str, footer: &str, now: &str, llms_txt: Option<&str>) -> String {
     let mut t = String::new();
-    if let Some(i) = cfg.instructions.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        t += &format!("<instructions>\n<system_instructions>\n{i}\n</system_instructions>\n</instructions>\n\n");
+    let sys = cfg.instructions.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let llms = llms_txt.map(str::trim).filter(|s| !s.is_empty());
+    if sys.is_some() || llms.is_some() {
+        t += "<instructions>\n";
+        if let Some(i) = sys {
+            t += &format!("<system_instructions>\n{i}\n</system_instructions>\n");
+        }
+        if let Some(l) = llms {
+            t += &format!("<llms_txt>\n{l}\n</llms_txt>\n");
+        }
+        t += "</instructions>\n\n";
     }
     let steps = history.iter().filter(|h| matches!(h, Hist::Step { .. })).count();
     t += &format!(
@@ -239,10 +276,25 @@ mod tests {
     fn prompt_has_history_and_state() {
         let cfg: Config = serde_json::from_value(json!({"baseURL":"x","model":"m"})).unwrap();
         let h = vec![Hist::Step { r: Reflection { evaluation_previous_goal: "e".into(), memory: "m".into(), next_goal: "n".into() }, output: "✅ ok".into() }, Hist::Obs("nav".into())];
-        let p = user_prompt(&cfg, "do it", &h, "H", "C", "F", "now");
+        let p = user_prompt(&cfg, "do it", &h, "H", "C", "F", "now", None);
         assert!(p.contains("Step 2 of 40 max possible steps"));
         assert!(p.contains("<step_1>\nEvaluation of Previous Step: e\nMemory: m\nNext Goal: n\nAction Results: ✅ ok\n</step_1>"));
         assert!(p.contains("<sys>nav</sys>") && p.contains("<browser_state>\nH\nC\nF"));
-        assert!(system_prompt(&cfg).contains("<user_request>") && agent_output_tool(&cfg)["function"]["name"] == "AgentOutput");
+        assert!(system_prompt(&cfg).contains("<user_request>") && agent_output_tool(&tools(&cfg))["function"]["name"] == "AgentOutput");
+        let p = user_prompt(&cfg, "t", &[], "H", "C", "F", "now", Some("# Site\nUse /docs"));
+        assert!(p.starts_with("<instructions>\n<llms_txt>\n# Site\nUse /docs\n</llms_txt>\n</instructions>"));
+    }
+
+    #[test]
+    fn custom_tools_merge() {
+        let cfg: Config = serde_json::from_value(json!({"baseURL":"x","model":"m"})).unwrap();
+        let mine = ("ask_user".to_string(), "mine".to_string(), json!({}));
+        let extra = ("get_cart".to_string(), "cart".to_string(), json!({}));
+        let t = merge_tools(tools(&cfg), &[mine, extra], &["scroll".into(), "done".into()]);
+        let names: Vec<&str> = t.iter().map(|x| x.0.as_str()).collect();
+        assert!(names.contains(&"done") && !names.contains(&"scroll") && names.last() == Some(&"get_cart"));
+        assert_eq!(t.iter().find(|x| x.0 == "ask_user").unwrap().1, "mine");
+        let cfg: Config = serde_json::from_value(json!({"baseURL":"x","model":"m"})).unwrap();
+        assert!(cfg.mask && cfg.highlight && !cfg.experimental_llms_txt);
     }
 }

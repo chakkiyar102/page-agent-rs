@@ -24,6 +24,7 @@ features = [
   "CssStyleDeclaration", "DomRect", "Event", "EventInit", "MouseEvent", "MouseEventInit",
   "PointerEvent", "PointerEventInit", "FocusOptions", "ScrollIntoViewOptions",
   "ScrollLogicalPosition", "ShadowRootInit", "ShadowRootMode", "KeyboardEvent", "HtmlFormElement", "HtmlHeadElement", "Request", "RequestInit", "Response", "Headers", "console",
+  "HtmlIFrameElement", "AbortController", "AbortSignal", "MediaQueryList", "Navigator",
 ]
 
 [profile.release]

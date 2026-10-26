@@ -9,19 +9,24 @@
 //! ```
 
 pub mod agent;
+pub mod i18n;
 pub mod tree;
 #[cfg(target_arch = "wasm32")]
 mod actions;
 #[cfg(target_arch = "wasm32")]
 mod dom;
+#[cfg(target_arch = "wasm32")]
+mod overlay;
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm::PageAgent;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use crate::agent::{self, Config, Hist};
-    use crate::{actions, dom, tree};
+    use crate::agent::{self, Config, Hist, ToolDef};
+    use crate::i18n::{t, Locale};
+    use crate::{actions, dom, overlay, tree};
+    use std::collections::HashMap;
     use serde_json::{json, Value};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
@@ -33,24 +38,38 @@ mod wasm {
     const PANEL_CSS: &str = include_str!("panel.css");
     const FONTS_ID: &str = "page-agent-rs-fonts";
     const FONTS_HREF: &str = "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&family=Space+Grotesk:wght@700&display=swap";
-    const PANEL_HTML: &str = r#"<section class="pa" data-state="idle" aria-label="page-agent console">
+    fn panel_html(l: Locale) -> String {
+        format!(
+            r#"<section class="pa" data-state="idle" aria-label="{console}">
   <header class="pa-head">
     <span class="pa-mark">page-agent<span>.rs</span></span>
-    <span class="pa-status" role="status"><i class="pa-dot"></i><span data-status>Ready</span></span>
-    <button class="pa-min" type="button" aria-label="Collapse console" aria-expanded="true"></button>
+    <span class="pa-status" role="status"><i class="pa-dot"></i><span data-status>{ready}</span></span>
+    <button class="pa-min" type="button" aria-label="{collapse}" aria-expanded="true"></button>
   </header>
   <ol class="pa-log" aria-live="polite">
-    <li class="pa-empty"><strong>Tell it what to do.</strong>It reads this page as text, then clicks, types and scrolls one step at a time.<span class="pa-hint">↵ run · ⇧↵ new line</span></li>
+    <li class="pa-empty"><strong>{empty_title}</strong>{empty_body}<span class="pa-hint">{hint}</span></li>
   </ol>
   <form class="pa-form">
-    <label class="pa-sr" for="pa-task">Task for the agent</label>
-    <textarea class="pa-input" id="pa-task" rows="1" placeholder="Sign me up on the Pro plan…"></textarea>
+    <label class="pa-sr" for="pa-task">{task_label}</label>
+    <textarea class="pa-input" id="pa-task" rows="1" placeholder="{placeholder}"></textarea>
     <div class="pa-actions">
-      <button class="pa-btn pa-stop" type="button">Stop</button>
-      <button class="pa-btn pa-run" type="submit" disabled>Run task</button>
+      <button class="pa-btn pa-stop" type="button">{stop}</button>
+      <button class="pa-btn pa-run" type="submit" disabled>{run}</button>
     </div>
   </form>
-</section>"#;
+</section>"#,
+            console = t(l, "console"),
+            ready = t(l, "ready"),
+            collapse = t(l, "collapse"),
+            empty_title = t(l, "empty_title"),
+            empty_body = t(l, "empty_body"),
+            hint = t(l, "hint"),
+            task_label = t(l, "task_label"),
+            placeholder = t(l, "placeholder"),
+            stop = t(l, "stop"),
+            run = t(l, "run"),
+        )
+    }
 
     struct Inner {
         cfg: RefCell<Config>,
@@ -61,6 +80,11 @@ mod wasm {
         seen: js_sys::WeakSet,
         on_event: RefCell<Option<js_sys::Function>>,
         before_action: RefCell<Option<js_sys::Function>>,
+        /// registerTool: (definition, execute) per custom tool, and removed built-ins
+        custom_tools: RefCell<Vec<(ToolDef, js_sys::Function)>>,
+        removed_tools: RefCell<Vec<String>>,
+        /// llms.txt per origin; None = fetched, not found
+        llms_txt: RefCell<HashMap<String, Option<String>>>,
         /// the console's `.pa` root and the step row being filled in
         ui: RefCell<Option<Element>>,
         row: RefCell<Option<Element>>,
@@ -94,6 +118,9 @@ mod wasm {
                     seen: js_sys::WeakSet::new(),
                     on_event: RefCell::new(None),
                     before_action: RefCell::new(None),
+                    custom_tools: RefCell::new(vec![]),
+                    removed_tools: RefCell::new(vec![]),
+                    llms_txt: RefCell::new(HashMap::new()),
                     ui: RefCell::new(None),
                     row: RefCell::new(None),
                 }),
@@ -122,6 +149,31 @@ mod wasm {
             *self.inner.before_action.borrow_mut() = f;
         }
 
+        /// Add or replace a tool: `{description, parameters, execute}` where `parameters` is a JSON
+        /// schema object and `execute(args)` returns (a promise of) the result the model reads.
+        /// Same name as a built-in replaces it. `null` removes the tool (`done` can't be removed).
+        #[wasm_bindgen(js_name = registerTool)]
+        pub fn register_tool(&self, name: String, def: JsValue) -> Result<(), JsError> {
+            self.inner.custom_tools.borrow_mut().retain(|((n, _, _), _)| *n != name);
+            self.inner.removed_tools.borrow_mut().retain(|n| *n != name);
+            if def.is_null() || def.is_undefined() {
+                self.inner.removed_tools.borrow_mut().push(name);
+                return Ok(());
+            }
+            let get = |k: &str| js_sys::Reflect::get(&def, &k.into()).unwrap_or(JsValue::UNDEFINED);
+            let execute: js_sys::Function = get("execute").dyn_into().map_err(|_| JsError::new("tool.execute must be a function"))?;
+            let description = get("description").as_string().unwrap_or_default();
+            let params = get("parameters");
+            let schema = if params.is_undefined() {
+                json!({"type":"object","properties":{}})
+            } else {
+                let s = js_sys::JSON::stringify(&params).map_err(|_| JsError::new("tool.parameters must be JSON"))?;
+                serde_json::from_str(&String::from(s)).map_err(|e| JsError::new(&format!("bad tool.parameters: {e}")))?
+            };
+            self.inner.custom_tools.borrow_mut().push(((name, description, schema), execute));
+            Ok(())
+        }
+
         #[wasm_bindgen(getter)]
         pub fn running(&self) -> bool {
             self.inner.running.get()
@@ -137,6 +189,7 @@ mod wasm {
                 inner.stop.set(false);
                 inner.emit(json!({"type":"task","task":task}));
                 let (success, data) = run(&inner, &task).await;
+                overlay::hide();
                 inner.running.set(false);
                 inner.emit(json!({"type":"done","success":success,"data":data}));
                 Ok(to_js(&json!({"success":success,"data":data})))
@@ -172,7 +225,8 @@ mod wasm {
             let host = doc.create_element("div")?;
             host.set_id(dom::PANEL_ID);
             let shadow = host.attach_shadow(&web_sys::ShadowRootInit::new(web_sys::ShadowRootMode::Open))?;
-            shadow.set_inner_html(&format!("<style>{PANEL_CSS}</style>{PANEL_HTML}"));
+            let l = self.inner.locale();
+            shadow.set_inner_html(&format!("<style>{PANEL_CSS}</style>{}", panel_html(l)));
             doc.body().unwrap().append_child(&host)?;
 
             let q = |s: &str| shadow.query_selector(s).ok().flatten().unwrap();
@@ -223,7 +277,7 @@ mod wasm {
                 let collapsed = r2.has_attribute("data-collapsed");
                 let _ = if collapsed { r2.remove_attribute("data-collapsed") } else { r2.set_attribute("data-collapsed", "") };
                 let _ = m2.set_attribute("aria-expanded", if collapsed { "true" } else { "false" });
-                let _ = m2.set_attribute("aria-label", if collapsed { "Collapse console" } else { "Expand console" });
+                let _ = m2.set_attribute("aria-label", t(l, if collapsed { "collapse" } else { "expand" }));
             })?;
             Ok(())
         }
@@ -251,7 +305,14 @@ mod wasm {
     }
 
     impl Inner {
+        /// `locale` config, else the browser's language.
+        fn locale(&self) -> Locale {
+            let tag = self.cfg.borrow().locale.clone().or_else(|| win().navigator().language()).unwrap_or_default();
+            Locale::parse(&tag)
+        }
+
         fn emit(&self, ev: Value) {
+            let l = self.locale();
             if let Some(f) = self.on_event.borrow().as_ref() {
                 let _ = f.call1(&JsValue::NULL, &to_js(&ev));
             }
@@ -275,7 +336,9 @@ mod wasm {
             match kind.as_str() {
                 "task" => {
                     log.set_inner_html("");
-                    log.append_child(&node("li", "pa-task", &s("task"))).ok();
+                    let li = node("li", "pa-task", &s("task"));
+                    let _ = li.set_attribute("data-label", t(l, "task_tag"));
+                    log.append_child(&li).ok();
                     let _ = ui.set_attribute("data-state", "running");
                     ui.remove_attribute("data-collapsed").ok();
                 }
@@ -284,11 +347,11 @@ mod wasm {
                     let _ = row.set_attribute("data-ok", "pending");
                     row.append_child(&node("span", "pa-n", &format!("{n:02}"))).ok();
                     let body = node("div", "", "");
-                    body.append_child(&node("p", "pa-goal", "Reading the page…")).ok();
+                    body.append_child(&node("p", "pa-goal", t(l, "reading"))).ok();
                     row.append_child(&body).ok();
                     log.append_child(&row).ok();
                     *self.row.borrow_mut() = Some(row);
-                    status(&format!("Step {n} · thinking"));
+                    status(&t(l, "step_thinking").replace("{n}", &n.to_string()));
                 }
                 "step" if s("tool") == "done" => {
                     // the final card carries the answer; a "done" step row would repeat it
@@ -300,14 +363,14 @@ mod wasm {
                     if let Some(row) = self.row.borrow().as_ref() {
                         let body = row.last_element_child().unwrap();
                         let goal = s("next_goal");
-                        body.first_element_child().unwrap().set_text_content(Some(if goal.is_empty() { "Next action" } else { &goal }));
+                        body.first_element_child().unwrap().set_text_content(Some(if goal.is_empty() { t(l, "next_action") } else { &goal }));
                         let call = node("code", "pa-call", "");
                         call.append_child(&node("b", "", &s("tool"))).ok();
                         let _ = call.insert_adjacent_text("beforeend", &format!("({})", agent::format_args(&ev["input"])));
                         body.append_child(&call).ok();
                         let _ = row.set_attribute("data-ok", if s("tool") == "done" { "true" } else { "pending" });
                     }
-                    status(&format!("Step {n} · acting"));
+                    status(&t(l, "step_acting").replace("{n}", &n.to_string()));
                 }
                 "executed" => {
                     if let Some(row) = self.row.borrow().as_ref() {
@@ -318,7 +381,7 @@ mod wasm {
                 }
                 "error" => {
                     if let Some(row) = self.row.borrow().as_ref() {
-                        row.last_element_child().unwrap().append_child(&node("p", "pa-out", &s("message"))).ok();
+                        row.last_element_child().unwrap().append_child(&node("p", "pa-out pa-err", &s("message"))).ok();
                         let _ = row.set_attribute("data-ok", "warn");
                     }
                 }
@@ -332,12 +395,12 @@ mod wasm {
                     let ok = ev["success"] == true;
                     let f = node("li", "pa-final", "");
                     let _ = f.set_attribute("data-ok", if ok { "true" } else { "false" });
-                    f.append_child(&node("p", "pa-final-label", if ok { "Done" } else { "Didn’t finish" })).ok();
+                    f.append_child(&node("p", "pa-final-label", t(l, if ok { "done" } else { "not_finished" }))).ok();
                     f.append_child(&node("p", "pa-final-text", &s("data"))).ok();
                     log.append_child(&f).ok();
                     let steps = self.history.borrow().iter().filter(|h| matches!(h, Hist::Step { .. })).count() + 1;
                     let _ = ui.set_attribute("data-state", if ok { "done" } else { "error" });
-                    status(&if ok { format!("Done · {steps} steps") } else { "Stopped".to_string() });
+                    status(&if ok { t(l, "done_steps").replace("{n}", &steps.to_string()) } else { t(l, "stopped").to_string() });
                 }
                 _ => {}
             }
@@ -355,9 +418,14 @@ mod wasm {
         };
         let expansion = inner.cfg.borrow().viewport_expansion;
         set_pe("none");
+        overlay::passthrough(true);
         let snap = dom::snapshot(expansion, &inner.seen);
+        overlay::passthrough(false);
         set_pe("");
         let content = tree::serialize(&snap.roots);
+        if inner.running.get() && inner.cfg.borrow().highlight {
+            overlay::draw_boxes(&snap.elements);
+        }
         *inner.elements.borrow_mut() = snap.elements;
         let (h, f) = dom::page_header_footer(expansion);
         (h, content, f)
@@ -396,15 +464,42 @@ mod wasm {
         Ok(v)
     }
 
+    /// `<origin>/llms.txt`, cached per origin, 3 s timeout, first 1000 chars. Same as upstream.
+    async fn llms_txt(inner: &Inner) -> Option<String> {
+        let origin = win().location().origin().ok().filter(|o| o != "null")?;
+        if let Some(hit) = inner.llms_txt.borrow().get(&origin) {
+            return hit.clone();
+        }
+        let url = format!("{origin}/llms.txt");
+        let ctrl = web_sys::AbortController::new().ok()?;
+        let init = web_sys::RequestInit::new();
+        init.set_signal(Some(&ctrl.signal()));
+        let abort = Closure::once_into_js(move || ctrl.abort());
+        let _ = win().set_timeout_with_callback_and_timeout_and_arguments_0(abort.unchecked_ref(), 3000);
+        let got = async {
+            let resp: web_sys::Response = JsFuture::from(win().fetch_with_str_and_init(&url, &init)).await.ok()?.dyn_into().ok()?;
+            if !resp.ok() {
+                return None;
+            }
+            JsFuture::from(resp.text().ok()?).await.ok()?.as_string()
+        }
+        .await
+        .map(|t| if t.chars().count() > 1000 { format!("{}...", t.chars().take(1000).collect::<String>()) } else { t });
+        inner.llms_txt.borrow_mut().insert(origin, got.clone());
+        got
+    }
+
     async fn run(inner: &Rc<Inner>, task: &str) -> (bool, String) {
         let cfg = inner.cfg.borrow().clone();
         let cfg = &cfg;
         inner.history.borrow_mut().clear();
-        let tool_defs = agent::tools(cfg);
-        let known: Vec<&str> = tool_defs.iter().map(|t| t.0).collect();
+        let custom: Vec<ToolDef> = inner.custom_tools.borrow().iter().map(|(d, _)| d.clone()).collect();
+        let tool_defs = agent::merge_tools(agent::tools(cfg), &custom, &inner.removed_tools.borrow());
+        let known: Vec<&str> = tool_defs.iter().map(|t| t.0.as_str()).collect();
+        overlay::show(cfg.mask);
         let body_base = json!({
             "model": cfg.model,
-            "tools": [agent::agent_output_tool(cfg)],
+            "tools": [agent::agent_output_tool(&tool_defs)],
             "tool_choice": {"type":"function","function":{"name":"AgentOutput"}},
             "parallel_tool_calls": false,
         });
@@ -438,7 +533,8 @@ mod wasm {
             }
             let (header, content, footer) = observe(inner);
             let now = String::from(js_sys::Date::new_0().to_locale_string("en-US", &JsValue::UNDEFINED));
-            let user = agent::user_prompt(cfg, task, &inner.history.borrow(), &header, &content, &footer, &now);
+            let llms = if cfg.experimental_llms_txt { llms_txt(inner).await } else { None };
+            let user = agent::user_prompt(cfg, task, &inner.history.borrow(), &header, &content, &footer, &now, llms.as_deref());
             let mut body = body_base.clone();
             body["messages"] = json!([{"role":"system","content":system},{"role":"user","content":user}]);
             if let Some(t) = cfg.temperature {
@@ -479,7 +575,7 @@ mod wasm {
             let i = i.as_u64().ok_or("index must be a non-negative integer")? as usize;
             let e = inner.elements.borrow().get(i).cloned().ok_or(format!("No interactive element found at index {i}"))?;
             // innerText keeps layout breaks ("Team For a group"), textContent would glue them
-            let raw = e.dyn_ref::<web_sys::HtmlElement>().map(|h| h.inner_text()).or_else(|| e.text_content()).unwrap_or_default();
+            let raw = dom::html(&e).map(|h| h.inner_text()).or_else(|| e.text_content()).unwrap_or_default();
             let label = raw.split_whitespace().collect::<Vec<_>>().join(" ");
             let label = if label.is_empty() { i.to_string() } else { label.chars().take(40).collect() };
             Ok((e, label))
@@ -501,6 +597,49 @@ mod wasm {
                 return agent::declined(tool, &label);
             }
         }
+        // glide the cursor onto the target before acting on it
+        if let Some(i) = input.get("index").and_then(|v| v.as_u64()) {
+            if let Ok((e, _)) = el(&input["index"]) {
+                overlay::point_at(&e, Some(i as usize)).await;
+                if tool == "click_element_by_index" {
+                    overlay::ripple();
+                }
+            }
+        }
+        let custom = inner.custom_tools.borrow().iter().find(|((n, _, _), _)| n == tool).map(|(_, f)| f.clone());
+        if let Some(f) = custom {
+            return run_custom(tool, &f, input).await;
+        }
+        overlay::passthrough(true);
+        let out = builtin(cfg, tool, input, el).await;
+        overlay::passthrough(false);
+        out
+    }
+
+    /// Custom tool result: strings as-is, anything else as JSON. Throws become ❌ results.
+    async fn run_custom(tool: &str, f: &js_sys::Function, input: &Value) -> String {
+        let called = f.call1(&JsValue::NULL, &to_js(input));
+        let v = match called {
+            Ok(v) => JsFuture::from(js_sys::Promise::resolve(&v)).await,
+            Err(e) => Err(e),
+        };
+        match v {
+            Ok(v) => v.as_string().unwrap_or_else(|| {
+                js_sys::JSON::stringify(&v).ok().and_then(|s| s.as_string()).unwrap_or_else(|| "undefined".into())
+            }),
+            Err(e) => {
+                let msg = js_sys::Reflect::get(&e, &"message".into()).ok().and_then(|m| m.as_string()).or_else(|| e.as_string()).unwrap_or_else(|| format!("{e:?}"));
+                format!("❌ Tool {tool} failed: {msg}")
+            }
+        }
+    }
+
+    async fn builtin(
+        cfg: &Config,
+        tool: &str,
+        input: &Value,
+        el: impl Fn(&Value) -> Result<(Element, String), String>,
+    ) -> String {
         let vh = win().inner_height().unwrap().as_f64().unwrap_or(800.0);
         let text = input["text"].as_str().unwrap_or("");
         match tool {
@@ -518,7 +657,7 @@ mod wasm {
             }
             "click_element_by_index" => match el(&input["index"]) {
                 Ok((e, l)) => match actions::click(&e).await {
-                    Ok(()) if e.dyn_ref::<web_sys::HtmlAnchorElement>().map(|a| a.target() == "_blank").unwrap_or(false) => {
+                    Ok(()) if dom::cast::<web_sys::HtmlAnchorElement>(&e, "a").map(|a| a.target() == "_blank").unwrap_or(false) => {
                         format!("✅ Clicked element ({l}). ⚠️ Link opened in a new tab.")
                     }
                     Ok(()) => format!("✅ Clicked element ({l})."),
